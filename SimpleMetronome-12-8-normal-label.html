@@ -1,0 +1,2741 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta name="format-detection" content="telephone=no,date=no,address=no,email=no">
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>SimpleMetronome</title>
+
+  <style>
+    :root {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color-scheme: dark;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: #111;
+      color: #fff;
+    }
+
+    .app {
+      width: min(92vw, 520px);
+      margin: 0 auto;
+      padding: 28px 0 36px;
+      text-align: center;
+    }
+
+    h1 {
+      margin: 0 0 34px;
+      font-size: 28px;
+      font-weight: 600;
+      letter-spacing: -0.02em;
+    }
+
+    .title-row {
+      position: relative;
+      margin-bottom: 34px;
+    }
+
+    .title-row h1 { margin: 0; }
+
+    .measure-clock {
+      position: relative;
+      isolation: isolate;
+      width: min(70vw, 290px);
+      aspect-ratio: 1;
+      margin: 0 auto;
+      border: 1px solid rgba(255,255,255,.34);
+      border-radius: 50%;
+      background: #161616;
+      overflow: visible;
+    }
+
+    /* Preserved SimpleLoop count-in visual language for future optional use. */
+    .countin-quadrant {
+      position: absolute;
+      inset: 0;
+      border-radius: 50%;
+      background: #414141;
+      opacity: 0;
+      pointer-events: none;
+      z-index: 1;
+      transition: opacity 80ms linear;
+    }
+
+    .measure-clock.counting-in .countin-quadrant { opacity: 1; }
+    .measure-clock.counting-in .countin-quadrant.done { opacity: 0; }
+    .q1 { clip-path: polygon(50% 50%, 50% 0%, 100% 0%, 100% 50%); }
+    .q2 { clip-path: polygon(50% 50%, 100% 50%, 100% 100%, 50% 100%); }
+    .q3 { clip-path: polygon(50% 50%, 50% 100%, 0% 100%, 0% 50%); }
+    .q4 { clip-path: polygon(50% 50%, 0% 50%, 0% 0%, 50% 0%); }
+
+    /* Measure dividers: beat 1 at 12 o'clock, then clockwise. */
+    .beat-line {
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      width: 1px;
+      height: 50%;
+      background: rgba(255,255,255,.28);
+      transform-origin: 50% 0%;
+      pointer-events: none;
+      z-index: 5;
+      transition: background 70ms linear, box-shadow 70ms linear;
+    }
+
+    .beat-line-1 {
+      transform: rotate(180deg);
+      background: rgba(255,255,255,.34);
+    }
+
+    .beat-line.flash {
+      width: 2px;
+      background: #fff;
+      box-shadow:
+        0 0 7px rgba(255,255,255,.95),
+        0 0 14px rgba(255,255,255,.72);
+    }
+
+    /* Beat 1 also flashes the circular boundary inward. */
+    .measure-clock.downbeat-circle-flash {
+      border-color: rgba(255,255,255,.88);
+      box-shadow:
+        inset 0 0 0 2px rgba(255,255,255,.82),
+        inset 0 0 16px rgba(255,255,255,.72),
+        inset 0 0 30px rgba(255,255,255,.45);
+    }
+
+    /* Sweeping measure hand. Hidden while idle. */
+    .clock-hand {
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      width: 5px;
+      height: 50%;
+      background: linear-gradient(
+        to top,
+        rgba(255,255,255,.95) 0%,
+        rgba(255,255,255,.92) 25%,
+        rgba(255,255,255,.72) 70%,
+        rgba(255,255,255,.38) 100%
+      );
+      clip-path: polygon(30% 100%, 70% 100%, 56% 0%, 44% 0%);
+      transform-origin: 50% 100%;
+      transform: translate(-50%, -100%) rotate(0deg);
+      pointer-events: none;
+      z-index: 5;
+      opacity: 0;
+      transition: opacity 70ms linear;
+      will-change: transform;
+    }
+
+    .clock-hand.visible { opacity: 1; }
+
+    /* Same central circular control scale as SimpleLoop, adapted to Play / Stop. */
+    #metronomeToggle {
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      transform: translate(-50%, -50%);
+      width: 82px;
+      height: 82px;
+      margin: 0;
+      padding: 0;
+      border: 1px solid rgba(255,255,255,.9);
+      border-radius: 50%;
+      background: #f3f3f5;
+      box-shadow: inset 0 0 0 1px rgba(255,255,255,.35);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 1000;
+      pointer-events: auto;
+      touch-action: manipulation;
+      -webkit-appearance: none;
+      appearance: none;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    .play-symbol {
+      width: 0;
+      height: 0;
+      margin-left: 5px;
+      border-top: 17px solid transparent;
+      border-bottom: 17px solid transparent;
+      border-left: 27px solid #36c46b;
+    }
+
+    #metronomeToggle.running .play-symbol {
+      width: 34px;
+      height: 34px;
+      margin-left: 0;
+      border: 0;
+      border-radius: 9px;
+      background: #333;
+    }
+
+    .info-toggle,
+    .settings-toggle {
+      position: absolute;
+      top: 50%;
+      transform: translateY(-50%);
+      width: 30px;
+      height: 30px;
+      padding: 0;
+      border: 1px solid rgba(255,255,255,.45);
+      border-radius: 50%;
+      background: transparent;
+      color: rgba(255,255,255,.78);
+      line-height: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      -webkit-appearance: none;
+      appearance: none;
+      touch-action: manipulation;
+    }
+
+    .settings-toggle {
+      left: 2px;
+      font-size: 18px;
+    }
+
+    .info-toggle {
+      right: 2px;
+      font-family: Georgia, "Times New Roman", serif;
+      font-size: 20px;
+      font-weight: 700;
+    }
+
+    .info-toggle.active,
+    .settings-toggle.active {
+      color: #fff;
+      border-color: rgba(255,255,255,.9);
+      background: rgba(255,255,255,.10);
+    }
+
+    .settings-toggle.active {
+      color: #fff !important;
+      border-color: #fff !important;
+      background: rgba(255,255,255,.18) !important;
+      box-shadow: 0 0 10px rgba(255,255,255,.28);
+    }
+
+    .control-help {
+      position: absolute;
+      left: 50%;
+      top: calc(50% + 94px);
+      width: min(76vw, 250px);
+      transform: translateX(-50%);
+      padding: 8px 10px;
+      border-radius: 10px;
+      background: rgba(20,20,20,.94);
+      border: 1px solid rgba(255,255,255,.18);
+      color: rgba(255,255,255,.90);
+      font-size: 13px;
+      line-height: 1.3;
+      text-align: center;
+      z-index: 1200;
+      pointer-events: none;
+    }
+
+    .control-help[hidden],
+    .settings-popup[hidden] { display: none; }
+
+    .settings-popup {
+      position: relative;
+      width: min(82vw, 320px);
+      margin: 34px auto 0;
+      padding: 0 0 max(22px, env(safe-area-inset-bottom));
+      border: 0;
+      border-radius: 0;
+      background: transparent;
+      box-shadow: none;
+      overflow: visible;
+    }
+
+    .tempo-row {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 12px;
+      align-items: center;
+      margin-bottom: 12px;
+    }
+
+    .tempo-step {
+      width: 48px;
+      height: 44px;
+      padding: 0;
+      border: 1px solid rgba(255,255,255,.18);
+      border-radius: 12px;
+      background: rgba(255,255,255,.06);
+      color: #fff;
+      font-size: 28px;
+      line-height: 1;
+      -webkit-appearance: none;
+      appearance: none;
+      touch-action: manipulation;
+    }
+
+    .tempo-value-wrap {
+      display: flex;
+      align-items: baseline;
+      justify-content: center;
+      gap: 7px;
+    }
+
+    .tempo-value {
+      width: 82px;
+      padding: 6px 8px;
+      border: 0;
+      border-radius: 8px;
+      background: rgba(255,255,255,.06);
+      color: #fff;
+      text-align: center;
+      font-size: 28px;
+      font-weight: 600;
+      font-variant-numeric: tabular-nums;
+      -webkit-appearance: none;
+      appearance: textfield;
+    }
+
+    .tempo-value::-webkit-inner-spin-button,
+    .tempo-value::-webkit-outer-spin-button {
+      -webkit-appearance: none;
+      margin: 0;
+    }
+
+    .tempo-unit {
+      color: rgba(255,255,255,.60);
+      font-size: 13px;
+      letter-spacing: .04em;
+    }
+
+    .tempo-slider,
+    .metronome-volume-slider {
+      width: 100%;
+      accent-color: #fff;
+    }
+
+    .time-signature-section,
+    .metronome-volume-section {
+      margin-top: 16px;
+      padding-top: 14px;
+      border-top: 1px solid rgba(255,255,255,.14);
+    }
+
+    .settings-label {
+      margin-bottom: 9px;
+      color: rgba(255,255,255,.68);
+      font-size: 13px;
+      text-align: center;
+    }
+
+    .time-signature-choices {
+      display: flex;
+      justify-content: center;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+
+    .time-signature-choice {
+      min-width: 45px;
+      height: 36px;
+      padding: 0 9px;
+      border: 1px solid rgba(255,255,255,.18);
+      border-radius: 9px;
+      background: rgba(255,255,255,.05);
+      color: rgba(255,255,255,.72);
+      font-size: 15px;
+    }
+
+    .time-signature-choice.selected {
+      border-color: rgba(255,255,255,.9);
+      background: rgba(255,255,255,.16);
+      color: #fff;
+    }
+
+    .metronome-volume-row {
+      display: grid;
+      grid-template-columns: 1fr 48px;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .metronome-volume-value {
+      color: rgba(255,255,255,.72);
+      font-size: 13px;
+      font-variant-numeric: tabular-nums;
+      text-align: right;
+    }
+  
+    /* Unified control typography. */
+    .controls-panel,
+    .controls-panel button,
+    .controls-panel input,
+    .settings-label,
+    .tempo-value,
+    .tempo-unit,
+    .time-signature-choice,
+    .metronome-volume-value {
+      font-size: 16px !important;
+    }
+
+
+    /* BPM value emphasis. */
+    .tempo-value-wrap {
+      justify-content: center !important;
+      width: 100%;
+    }
+    .tempo-value {
+      font-size: 20.8px !important;
+      text-align: center !important;
+      margin-left: auto !important;
+      margin-right: auto !important;
+    }
+
+
+    /* Clean, truly centered BPM readout. */
+    .tempo-value-wrap {
+      display: flex !important;
+      align-items: baseline !important;
+      justify-content: center !important;
+      gap: 5px !important;
+      width: 100% !important;
+      margin: 0 auto !important;
+    }
+
+    .tempo-value {
+      width: 3.2ch !important;
+      padding: 0 !important;
+      margin: 0 !important;
+      border: 0 !important;
+      border-radius: 0 !important;
+      background: transparent !important;
+      box-shadow: none !important;
+      outline: none !important;
+      font-size: 20.8px !important;
+      text-align: right !important;
+    }
+
+    .tempo-unit {
+      margin: 0 !important;
+      padding: 0 !important;
+      font-size: 16px !important;
+    }
+
+
+    /* Drum rhythm selector. */
+    .time-signature-choices {
+      flex-wrap: nowrap !important;
+      align-items: center;
+    }
+
+    .drum-rhythm-button {
+      width: 36px;
+      min-width: 36px;
+      height: 36px;
+      padding: 0;
+      border: 1px solid rgba(255,255,255,.18);
+      border-radius: 9px;
+      background: rgba(255,255,255,.05);
+      color: rgba(255,255,255,.72);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      -webkit-appearance: none;
+      appearance: none;
+      touch-action: manipulation;
+    }
+
+    .drum-rhythm-button.active {
+      border-color: rgba(255,255,255,.9);
+      background: rgba(255,255,255,.16);
+      color: #fff;
+    }
+
+    .drum-rhythm-button svg {
+      width: 24px;
+      height: 24px;
+      display: block;
+    }
+
+    .rhythm-picker {
+      margin-top: 10px;
+      width: 100%;
+    }
+
+    .rhythm-picker[hidden] {
+      display: none;
+    }
+
+    .rhythm-select {
+      width: 100%;
+      min-height: 44px;
+      padding: 0 38px 0 12px;
+      border: 1px solid rgba(255,255,255,.22);
+      border-radius: 9px;
+      background: #1b1b1b;
+      color: #fff;
+      font: inherit;
+      font-size: 16px;
+      -webkit-appearance: menulist;
+      appearance: auto;
+    }
+
+    @media (max-width: 390px) {
+      .time-signature-choices {
+        gap: 4px;
+      }
+
+      .time-signature-choice {
+        min-width: 40px;
+        padding: 0 6px;
+      }
+
+      .drum-rhythm-button {
+        width: 34px;
+        min-width: 34px;
+      }
+    }
+    .chord-dial.visible{opacity:1}
+    .chord-dial-segment{position:absolute;left:50%;top:50%;width:1px;height:50%;
+      transform-origin:50% 0%;background:rgba(255,255,255,.14)}
+    .chord-dial-label{position:absolute;color:rgba(255,255,255,.56);
+      font-size:13px;font-weight:500;white-space:nowrap;transform:translate(-50%,-50%);
+      transition:font-size 120ms linear,color 120ms linear}
+    .chord-dial-label.current{color:#fff;font-size:18px;font-weight:700}
+    .section-name{margin-top:12px;min-height:20px;text-align:center;
+      color:rgba(255,255,255,.62);font-size:16px;font-weight:600;
+      letter-spacing:.04em;text-transform:uppercase}
+    .section-name[hidden]{display:none}
+    .harmonic-timeline.visible{opacity:1}
+    .timeline-arc{fill:none;stroke:rgba(255,255,255,.22);stroke-width:2}
+    .timeline-arc.current{stroke:rgba(255,255,255,.78);stroke-width:3}
+    .timeline-arc.preview{stroke:rgba(255,255,255,.11);stroke-dasharray:3 4}
+    .timeline-separator{stroke:rgba(255,255,255,.20);stroke-width:1}
+    .timeline-separator.section-break{stroke:rgba(255,255,255,.52);stroke-width:1.5}
+    .timeline-label{
+      fill:rgba(255,255,255,.62);font-size:12px;font-weight:500;
+      font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+      text-anchor:middle;dominant-baseline:middle
+    }
+    .timeline-label.current{fill:#fff;font-size:15px;font-weight:700}
+    .timeline-label.preview{fill:rgba(255,255,255,.34)}
+    .timeline-dot{fill:#fff;stroke:rgba(0,0,0,.35);stroke-width:1}
+    .chord-arch.visible{opacity:1}
+
+    .lane-chord{
+      position:absolute;
+      top:0;
+      left:50%;
+      transform:translateX(-50%);
+      color:#fff;
+      font-size:24px;
+      font-weight:700;
+      line-height:1;
+      white-space:nowrap;
+      will-change:transform,opacity;
+    }
+
+    .lane-chord.current.exit{
+      transition:transform 260ms ease,opacity 260ms ease;
+      transform:translateX(-170%);
+      opacity:0;
+    }
+
+    .lane-chord.next{
+      left:100%;
+      opacity:0;
+      color:rgba(255,255,255,.64);
+      font-size:18px;
+      font-weight:600;
+      transform:translateX(16px);
+    }
+
+    .lane-chord.next.preview{
+      opacity:1;
+      transition:opacity 180ms linear;
+    }
+
+    .lane-chord.next.arrive{
+      left:50%;
+      color:#fff;
+      font-size:24px;
+      font-weight:700;
+      opacity:1;
+      transition:
+        left 280ms ease,
+        transform 280ms ease,
+        color 280ms ease,
+        font-size 280ms ease,
+        opacity 180ms linear;
+      transform:translateX(-50%);
+    }
+
+
+    /* Chord approach display. */
+    .chord-stage,
+
+    /* Centered group of four guide lines. */
+
+    .lane-chord{
+      position:absolute!important;
+      top:auto!important;
+      left:auto!important;
+      margin:0!important;
+      white-space:nowrap!important;
+      line-height:1!important;
+      will-change:left,top,transform,opacity!important;
+    }
+
+    /* 315 degrees clockwise from 12 o'clock: upper-left circumference. */
+
+    .lane-chord.next{
+      top:9.5%!important;
+      transform:translateX(0)!important;
+      font-size:18px!important;
+      font-weight:600!important;
+      color:rgba(255,255,255,.72)!important;
+      opacity:0;
+      transition:left 260ms ease,opacity 160ms linear,font-size 260ms ease,color 260ms ease,transform 260ms ease!important;
+    }
+
+    .lane-chord.next.visible{opacity:1}
+
+    /* Positions align the left edge of the chord with each vertical guide.
+       These correspond to g1..g4 from left to right. */
+    .lane-chord.next.at1{left:37.4%!important}
+    .lane-chord.next.at2{left:45.8%!important}
+    .lane-chord.next.at3{left:54.2%!important}
+    .lane-chord.next.at4{left:62.6%!important}
+
+    .lane-chord.next.arrive{
+      left:15%!important;
+      top:15%!important;
+      transform:translate(-50%,-50%)!important;
+      font-size:22px!important;
+      font-weight:700!important;
+      color:#fff!important;
+      opacity:1!important;
+      transition:left 320ms ease,top 320ms ease,transform 320ms ease,font-size 320ms ease,color 320ms ease!important;
+    }
+
+    .lane-chord.current,
+    .lane-chord.next{
+      font-size:22px!important;
+      font-weight:700!important;
+    }
+
+    .lane-chord.next{
+      color:rgba(255,255,255,.42)!important;
+    }
+
+    .lane-chord.next.at1{left:34.0%!important}
+    .lane-chord.next.at2{left:42.4%!important}
+    .lane-chord.next.at3{left:50.8%!important}
+    .lane-chord.next.at4{left:59.2%!important}
+    .lane-chord.next.at5{left:67.6%!important}
+    .lane-chord.next.at6{left:76.0%!important}
+
+    /* Chord positions aligned to the six guide lines. */
+    .lane-chord.next.at1{left:38%!important}
+    .lane-chord.next.at2{left:46%!important}
+    .lane-chord.next.at3{left:58%!important}
+    .lane-chord.next.at4{left:70%!important}
+    .lane-chord.next.at5{left:82%!important}
+    .lane-chord.next.at6{left:94%!important}
+
+
+    /* Two-measure / eight-beat chord runway. */
+
+
+    /* Runway shifted right: future beats enter from the right and march left. */
+
+    /* Keep the current chord clearly separate on the left. */
+
+
+    /* Final runway geometry. */
+
+    /* Eight equally spaced beat lines.
+       With the runway beginning at 26% of screen width:
+       g1 and g2 are left of center; g3..g8 are right of center.
+       g8 lands exactly at the right edge. */
+
+    /* Current chord remains separate to the left. */
+
+
+    /* Viewport-based chord runway geometry. */
+
+    /* All line TOPS align exactly with the topmost point of the circle:
+       chordLane itself begins at measureClock top, so guides top:0. */
+
+    /* Exactly two lines left of viewport center.
+       g1 = 42vw, g2 = 48vw, g3 = 56vw, then evenly to 100vw. */       /* 42vw */ /* 48vw */ /* 56vw */ /* 64.8vw */ /* 73.6vw */ /* 82.4vw */ /* 91.2vw */     /* 100vw */
+
+    /* Current chord remains separate and well left of the runway. */
+
+    /* Upcoming chord labels share the runway's exact coordinate system. */
+
+
+    /* One-line, evenly spaced two-measure runway. */
+
+    /* 8 equal positions from 42vw through 100vw inclusive. */
+
+
+    /* Prevent right-edge chord motion from changing the page width on iOS. */
+    html,
+    body {
+      overflow-x: hidden !important;
+    }
+
+    .app {
+      overflow-x: hidden !important;
+    }
+
+    /* Keep transitions composited rather than affecting document geometry. */
+
+
+    /* Current chord emphasis: 2x size, same center at 315°. */
+
+
+    /* Show chord runway only when chord-playing mode is active. */
+    .chord-guides,
+
+    .chord-lane.visible .chord-guides,
+    .chord-lane.visible .upcoming-chord-runway {
+      opacity: 1 !important;
+      visibility: visible !important;
+    }
+
+    .chord-lane.visible .song-section-label{opacity:1}
+
+    .incoming-section-label.visible,
+
+
+    /* Re-coded section title handoff. */
+
+
+    /* ---------- Chord runway + section titles ---------- */
+
+    html,
+    body,
+    .app {
+      overflow-x: hidden;
+    }
+
+    .chord-lane {
+      position: absolute;
+      left: 50%;
+      top: 0;
+      width: 100vw;
+      height: 90px;
+      transform: translateX(-50%);
+      overflow: hidden;
+      z-index: 60;
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity 120ms linear;
+    }
+
+    .chord-lane.visible {
+      opacity: 1;
+    }
+
+    .chord-guides {
+      position: absolute;
+      left: 42vw;
+      right: 0;
+      top: 0;
+      height: 44px;
+    }
+
+    .chord-guide {
+      position: absolute;
+      top: 0;
+      width: 1px;
+      height: 44px;
+      background: rgba(255,255,255,.34);
+    }
+
+    .chord-guide.g1 { left: 0%; }
+    .chord-guide.g2 { left: 14.285714%; }
+    .chord-guide.g3 { left: 28.571429%; }
+    .chord-guide.g4 { left: 42.857143%; }
+    .chord-guide.g5 { left: 57.142857%; }
+    .chord-guide.g6 { left: 71.428571%; }
+    .chord-guide.g7 { left: 85.714286%; }
+    .chord-guide.g8 { left: 100%; }
+
+    .lane-chord.current {
+      position: absolute;
+      left: 14.645%;
+      top: 42.5px;
+      transform: translate(-50%, -50%);
+      font-size: 44px;
+      line-height: 1;
+      font-weight: 700;
+      color: #fff;
+      opacity: 1;
+      text-align: center;
+      white-space: nowrap;
+    }
+
+    .upcoming-chord-runway {
+      position: absolute;
+      left: 42vw;
+      right: 0;
+      top: 0;
+      height: 44px;
+      overflow: hidden;
+    }
+
+    .runway-chord {
+      position: absolute;
+      top: 50%;
+      transform: translateY(-50%);
+      font-size: 22px;
+      font-weight: 700;
+      line-height: 1;
+      color: rgba(255,255,255,.42);
+      white-space: nowrap;
+      text-align: left;
+      transition: left 250ms ease, opacity 160ms linear;
+      will-change: left, opacity, transform;
+      contain: layout paint;
+    }
+
+    .song-section-label,
+    .incoming-section-label {
+      position: absolute;
+      top: 50px;
+      transform: translateX(-50%);
+      font-size: 16px;
+      font-weight: 500;
+      white-space: nowrap;
+      pointer-events: none;
+    }
+
+    .song-section-label {
+      left: 50%;
+      color: rgba(255,255,255,.72);
+      opacity: 1;
+      transition: none;
+    }
+
+    .incoming-section-label {
+      left: 100%;
+      color: rgba(255,255,255,.72);
+      opacity: 0;
+      visibility: hidden;
+      transition: left 250ms ease;
+    }
+
+    .incoming-section-label.visible,
+    .incoming-section-label.waiting {
+      opacity: 1;
+      visibility: visible;
+    }
+
+    .incoming-section-label.waiting {
+      left: 50%;
+    }
+
+
+    /* Explicit current-chord presentation after cleanup. */
+    #currentChordLabel {
+      display: block !important;
+      position: absolute !important;
+      left: 14.645% !important;
+      top: 42.5px !important;
+      transform: translate(-50%, -50%) !important;
+      z-index: 90 !important;
+      font-size: 44px !important;
+      line-height: 1 !important;
+      font-weight: 700 !important;
+      color: #fff !important;
+      opacity: 1 !important;
+      visibility: visible !important;
+      text-align: center !important;
+      white-space: nowrap !important;
+      pointer-events: none !important;
+    }
+
+    .chord-lane:not(.visible) #currentChordLabel {
+      visibility: hidden !important;
+    }
+
+    .chord-lane.visible #currentChordLabel {
+      visibility: visible !important;
+    }
+
+
+    .time-signature-choice {
+      touch-action: manipulation;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+
+    /* Prevent iOS/WKWebView data detectors from hijacking time-signature text. */
+    .time-signature-choice,
+    .time-signature-choice span {
+      -webkit-touch-callout: none !important;
+      -webkit-user-select: none !important;
+      user-select: none !important;
+    }
+
+    .time-signature-choice a[x-apple-data-detectors],
+    .time-signature-choice a[href^="calshow:"],
+    .time-signature-choice a[href^="x-apple-data-detectors:"] {
+      color: inherit !important;
+      text-decoration: none !important;
+      pointer-events: none !important;
+    }
+
+</style>
+</head>
+
+<body>
+  <main class="app">
+    <div class="title-row">
+      <h1>SimpleMetronome</h1>
+</div>
+
+    <div id="measureClock" class="measure-clock" aria-label="Measure position">
+
+      <div class="countin-quadrant q1"></div>
+      <div class="countin-quadrant q2"></div>
+      <div class="countin-quadrant q3"></div>
+      <div class="countin-quadrant q4"></div>
+
+      <div class="beat-line beat-line-1"></div>
+      <div class="beat-line beat-line-2"></div>
+      <div class="beat-line beat-line-3"></div>
+      <div class="beat-line beat-line-4"></div>
+      <div class="beat-line beat-line-5"></div>
+      <div class="beat-line beat-line-6"></div>
+      <div class="beat-line beat-line-7"></div>
+      <div class="beat-line beat-line-8"></div>
+      <div class="beat-line beat-line-9"></div>
+      <div class="beat-line beat-line-10"></div>
+      <div class="beat-line beat-line-11"></div>
+      <div class="beat-line beat-line-12"></div>
+
+      <div id="clockHand" class="clock-hand"></div>
+      <div id="chordLane" class="chord-lane" aria-hidden="true">
+        <div class="chord-guides" aria-hidden="true">
+          <span class="chord-guide g1"></span>
+          <span class="chord-guide g2"></span>
+          <span class="chord-guide g3"></span>
+          <span class="chord-guide g4"></span>
+          <span class="chord-guide g5"></span>
+          <span class="chord-guide g6"></span>
+          <span class="chord-guide g7"></span>
+          <span class="chord-guide g8"></span>
+        </div>
+        <div id="currentChordLabel" class="lane-chord current"></div>
+        <div id="upcomingChordRunway" class="upcoming-chord-runway"></div>
+        <div id="songSectionLabel" class="song-section-label"></div>
+        <div id="incomingSectionLabel" class="incoming-section-label"></div>
+      </div>
+
+      <button id="metronomeToggle" type="button" aria-label="Play metronome">
+        <span class="play-symbol" aria-hidden="true"></span>
+      </button>
+</div>
+    <div id="sectionName" class="section-name" hidden></div>
+
+      <div id="settingsPopup" class="settings-popup">
+        <div class="tempo-row">
+<div class="tempo-value-wrap">
+            <input id="tempoValue" class="tempo-value" type="number" min="30" max="240" step="1" value="100" inputmode="numeric" aria-label="Tempo in beats per minute">
+            <div class="tempo-unit">BPM</div>
+          </div>
+</div>
+
+        <input id="tempoSlider" class="tempo-slider" type="range" min="30" max="240" step="1" value="100" aria-label="Tempo">
+
+        <div class="time-signature-section">
+          <div class="settings-label">Time signature</div>
+          <div class="time-signature-choices" role="group" aria-label="Time signature and drum rhythm">
+            <button id="drumRhythmButton" type="button" class="drum-rhythm-button" aria-label="Choose drum rhythm" aria-expanded="false">
+              <svg viewBox="0 0 32 32" aria-hidden="true">
+                <ellipse cx="16" cy="13" rx="10" ry="4.5" fill="none" stroke="currentColor" stroke-width="1.8"/>
+                <path d="M6 13v7c0 2.5 4.5 4.5 10 4.5s10-2 10-4.5v-7" fill="none" stroke="currentColor" stroke-width="1.8"/>
+                <path d="M9 8.5L18 17M23 7.5l-8 9.5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>
+                <circle cx="9" cy="8.5" r="1.5" fill="currentColor"/>
+                <circle cx="23" cy="7.5" r="1.5" fill="currentColor"/>
+              </svg>
+            </button>
+            <button type="button" class="time-signature-choice selected" data-signature="4/4" data-beats="4">4/4</button>
+            <button type="button" class="time-signature-choice" data-signature="3/4" data-beats="3">3/4</button>
+            <button type="button" class="time-signature-choice" data-signature="6/8" data-beats="6">6/8</button>
+            <button type="button" class="time-signature-choice" data-signature="12/8" data-beats="12"><span x-apple-data-detectors="false">12/8</span></button>
+            <button type="button" class="time-signature-choice" data-signature="2/4" data-beats="2">2/4</button>
+          </div>
+          <div id="rhythmPicker" class="rhythm-picker" hidden>
+            <select id="rhythmSelect" class="rhythm-select" aria-label="Drum rhythm"></select>
+          </div>
+        </div>
+
+        <div class="metronome-volume-section">
+          <div class="settings-label">Volume</div>
+          <div class="metronome-volume-row">
+            <input id="metronomeVolume" class="metronome-volume-slider" type="range" min="0" max="100" step="1" value="100" aria-label="Metronome volume">
+            <div id="metronomeVolumeValue" class="metronome-volume-value">100%</div>
+          </div>
+        </div>
+      </div>
+  </main>
+
+  <script>
+  (() => {
+    'use strict';
+
+    /* ---------- Musical timing ---------- */
+
+    const DEFAULT_BPM = 100;
+    const MIN_BPM = 30;
+    const MAX_BPM = 240;
+    const SCHEDULE_AHEAD_SECONDS = 0.12;
+    const SCHEDULER_INTERVAL_MS = 20;
+    const START_LATENCY_SECONDS = 0.08;
+
+    let bpm = DEFAULT_BPM;
+    let beatsPerMeasure = 4;
+    let currentTimeSignature = '4/4';
+    let metronomeVolumeLevel = 1.0;
+
+    function secondsPerBeat() {
+      return 60 / bpm;
+    }
+
+    function secondsPerMeasure() {
+      return beatsPerMeasure * secondsPerBeat();
+    }
+
+    /* ---------- Rhythm library ----------
+       Step positions are zero-based within one measure.
+       subdivisions is the number of equal drum-grid steps per displayed metronome beat.
+    */
+
+    const RHYTHMS = {
+      '4/4': [
+        { id:'rock', name:'Basic rock / pop', subdivisions:4,
+          kick:[0,8], snare:[4,12], hat:[0,2,4,6,8,10,12,14] },
+        { id:'four-floor', name:'Four-on-the-floor', subdivisions:4,
+          kick:[0,4,8,12], snare:[4,12], hat:[0,2,4,6,8,10,12,14] },
+        { id:'funk', name:'Straight funk', subdivisions:4,
+          kick:[0,3,7,10,14], snare:[4,12], hat:[0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15] },
+        { id:'shuffle', name:'Shuffle', subdivisions:3,
+          kick:[0,6], snare:[3,9], hat:[0,2,3,5,6,8,9,11] },
+        { id:'half-time', name:'Half-time', subdivisions:4,
+          kick:[0,7,10], snare:[8], hat:[0,2,4,6,8,10,12,14] },
+        { id:'double-time', name:'Double-time', subdivisions:4,
+          kick:[0,6,8,14], snare:[2,6,10,14], hat:[0,2,4,6,8,10,12,14] },
+        { id:'disco', name:'Disco', subdivisions:4,
+          kick:[0,4,8,12], snare:[4,12], hat:[2,6,10,14], openHat:[2,6,10,14] },
+        { id:'one-drop', name:'Reggae one-drop', subdivisions:4,
+          kick:[8], snare:[8], hat:[2,6,10,14] },
+        { id:'rockers', name:'Reggae rockers', subdivisions:4,
+          kick:[0,8], snare:[8], hat:[2,6,10,14] },
+        { id:'bossa', name:'Bossa nova', subdivisions:4,
+          kick:[0,6,8,14], snare:[3,6,11,14], hat:[0,4,8,12] }
+      ],
+
+      '3/4': [
+        { id:'waltz', name:'Waltz', subdivisions:4,
+          kick:[0], snare:[4,8], hat:[0,4,8] },
+        { id:'rock-waltz', name:'Rock waltz', subdivisions:4,
+          kick:[0,7], snare:[4,8], hat:[0,2,4,6,8,10] },
+        { id:'pop-34', name:'Pop 3/4', subdivisions:4,
+          kick:[0,7], snare:[4,10], hat:[0,2,4,6,8,10] },
+        { id:'country-waltz', name:'Country waltz', subdivisions:4,
+          kick:[0], snare:[4,8], hat:[0,2,4,6,8,10] },
+        { id:'jazz-waltz', name:'Jazz waltz', subdivisions:3,
+          kick:[0,6], snare:[4,8], hat:[0,2,3,5,6,8] },
+        { id:'brush-waltz', name:'Brush waltz', subdivisions:3,
+          kick:[0], snare:[2,5,8], hat:[0,1,2,3,4,5,6,7,8] },
+        { id:'half-34', name:'Half-time 3/4', subdivisions:4,
+          kick:[0,8], snare:[6], hat:[0,2,4,6,8,10] },
+        { id:'folk-waltz', name:'Folk waltz', subdivisions:4,
+          kick:[0], snare:[4,8], hat:[0,4,8] },
+        { id:'heavy-34', name:'Heavy 3/4', subdivisions:4,
+          kick:[0,6,8], snare:[4,10], hat:[0,2,4,6,8,10] },
+        { id:'sync-34', name:'Syncopated 3/4', subdivisions:4,
+          kick:[0,3,7,10], snare:[4,8], hat:[0,2,4,6,8,10] }
+      ],
+
+      '6/8': [
+        { id:'basic-68', name:'Basic 6/8', subdivisions:2,
+          kick:[0], snare:[6], hat:[0,2,4,6,8,10] },
+        { id:'rock-ballad-68', name:'6/8 rock ballad', subdivisions:2,
+          kick:[0,4,8], snare:[6], hat:[0,2,4,6,8,10] },
+        { id:'blues-68', name:'6/8 blues', subdivisions:2,
+          kick:[0,8], snare:[6], hat:[0,2,4,6,8,10] },
+        { id:'shuffle-68', name:'6/8 shuffle', subdivisions:2,
+          kick:[0,5,8], snare:[6], hat:[0,2,4,6,8,10] },
+        { id:'soul-68', name:'6/8 soul', subdivisions:2,
+          kick:[0,3,8,11], snare:[6], hat:[0,2,4,6,8,10] },
+        { id:'gospel-68', name:'6/8 gospel', subdivisions:2,
+          kick:[0,3,5,8,11], snare:[6], hat:[0,2,4,6,8,10] },
+        { id:'half-68', name:'Half-time 6/8', subdivisions:2,
+          kick:[0,8], snare:[6], hat:[0,4,6,10] },
+        { id:'afro-cuban-68', name:'Afro-Cuban 6/8', subdivisions:2,
+          kick:[0,5,8], snare:[3,6,10], hat:[0,2,4,6,8,10] },
+        { id:'african-68', name:'African 6/8', subdivisions:2,
+          kick:[0,4,8], snare:[3,7,11], hat:[0,2,4,6,8,10] },
+        { id:'march-68', name:'6/8 march', subdivisions:2,
+          kick:[0,6], snare:[4,10], hat:[0,2,4,6,8,10] }
+      ],
+
+      '12/8': [
+        { id:'blues-128', name:'12/8 blues', subdivisions:2,
+          kick:[0,12], snare:[6,18], hat:[0,2,4,6,8,10,12,14,16,18,20,22] },
+        { id:'rock-ballad-128', name:'12/8 rock ballad', subdivisions:2,
+          kick:[0,8,12,20], snare:[6,18], hat:[0,2,4,6,8,10,12,14,16,18,20,22] },
+        { id:'slow-blues-128', name:'12/8 slow blues', subdivisions:2,
+          kick:[0,12,20], snare:[6,18], hat:[0,4,6,10,12,16,18,22] },
+        { id:'shuffle-128', name:'12/8 shuffle', subdivisions:2,
+          kick:[0,5,12,17], snare:[6,18], hat:[0,2,4,6,8,10,12,14,16,18,20,22] },
+        { id:'soul-128', name:'12/8 soul', subdivisions:2,
+          kick:[0,5,10,12,17,22], snare:[6,18], hat:[0,2,4,6,8,10,12,14,16,18,20,22] },
+        { id:'gospel-128', name:'12/8 gospel', subdivisions:2,
+          kick:[0,4,10,12,16,22], snare:[6,18], hat:[0,2,4,6,8,10,12,14,16,18,20,22] },
+        { id:'rnb-128', name:'12/8 R&B ballad', subdivisions:2,
+          kick:[0,10,12,22], snare:[6,18], hat:[0,2,4,6,8,10,12,14,16,18,20,22] },
+        { id:'half-128', name:'12/8 half-time', subdivisions:2,
+          kick:[0,12], snare:[12], hat:[0,4,8,12,16,20] },
+        { id:'triplet-rock-128', name:'12/8 triplet rock', subdivisions:2,
+          kick:[0,8,12,20], snare:[6,18], hat:[0,2,4,6,8,10,12,14,16,18,20,22] },
+        { id:'afro-128', name:'12/8 Afro-derived', subdivisions:2,
+          kick:[0,5,10,14,20], snare:[3,8,12,17,22], hat:[0,2,4,6,8,10,12,14,16,18,20,22] }
+      ],
+
+      '2/4': [
+        { id:'basic-24', name:'Basic 2/4', subdivisions:4,
+          kick:[0], snare:[4], hat:[0,2,4,6] },
+        { id:'march-24', name:'March', subdivisions:4,
+          kick:[0,4], snare:[2,6], hat:[0,2,4,6] },
+        { id:'polka', name:'Polka', subdivisions:4,
+          kick:[0], snare:[4], hat:[0,2,4,6] },
+        { id:'country-two', name:'Country two-beat', subdivisions:4,
+          kick:[0,6], snare:[4], hat:[0,2,4,6] },
+        { id:'train', name:'Train beat', subdivisions:4,
+          kick:[0,4], snare:[0,1,2,3,4,5,6,7], hat:[0,2,4,6] },
+        { id:'fast-rock-24', name:'Fast rock 2/4', subdivisions:4,
+          kick:[0,6], snare:[4], hat:[0,2,4,6] },
+        { id:'samba', name:'Samba', subdivisions:4,
+          kick:[0,3,4,7], snare:[2,5], hat:[0,2,4,6] },
+        { id:'baiao', name:'Baião', subdivisions:4,
+          kick:[0,3,6], snare:[4,7], hat:[0,2,4,6] },
+        { id:'frevo', name:'Frevo', subdivisions:4,
+          kick:[0,4], snare:[1,2,3,5,6,7], hat:[0,2,4,6] },
+        { id:'funk-24', name:'Two-beat funk', subdivisions:4,
+          kick:[0,3,6], snare:[4,7], hat:[0,1,2,3,4,5,6,7] }
+      ]
+    };
+
+    const selectedRhythmBySignature = {
+      '4/4': '',
+      '3/4': '',
+      '6/8': '',
+      '12/8': '',
+      '2/4': ''
+    };
+
+    /* ---------- DOM ---------- */
+
+    const measureClock = document.getElementById('measureClock');
+    const clockHand = document.getElementById('clockHand');
+    const chordLane = document.getElementById('chordLane');
+    const currentChordLabel = document.getElementById('currentChordLabel');
+    const upcomingChordRunway = document.getElementById('upcomingChordRunway');
+    const songSectionLabel = document.getElementById('songSectionLabel');
+    const incomingSectionLabel = document.getElementById('incomingSectionLabel');
+    const sectionName = document.getElementById('sectionName');
+    const metronomeToggle = document.getElementById('metronomeToggle');
+
+    const tempoValue = document.getElementById('tempoValue');
+    const tempoSlider = document.getElementById('tempoSlider');
+    const timeSignatureChoices = [...document.querySelectorAll('.time-signature-choice')];
+    const metronomeVolume = document.getElementById('metronomeVolume');
+    const metronomeVolumeValue = document.getElementById('metronomeVolumeValue');
+
+    const drumRhythmButton = document.getElementById('drumRhythmButton');
+    const rhythmPicker = document.getElementById('rhythmPicker');
+    const rhythmSelect = document.getElementById('rhythmSelect');
+
+    const beatLines = [...document.querySelectorAll('.beat-line')];
+
+    /* ---------- App state ---------- */
+
+    let running = false;
+    let rhythmPickerVisible = false;
+
+    let audioContext = null;
+    let schedulerTimer = null;
+    let nextBeatTime = 0;
+    let nextBeatNumber = 1;
+    let phraseMeasure = 1; // 1–8; measure 8 receives the turnaround.
+
+    let clockAnchorTime = null;
+    let clockAnimationFrame = null;
+    let noiseBuffer = null;
+
+
+
+
+
+    let songVisualAnchorTime = null;
+
+
+
+    /* ---------- Chord runway ---------- */
+
+    let chordLaneAnimationFrame = null;
+    let chordLaneAnchorTime = null;
+    let chordLaneVisualIndex = 0;
+    let chordLaneLastBeat = -1;
+    let chordTransitionBusy = false;
+
+    function chordLaneActive() {
+      const id = selectedRhythmBySignature['4/4'];
+      return currentTimeSignature === '4/4' && (id === 'rock' || id === 'four-floor' || id === 'funk');
+    }
+
+
+
+    function eventAtBeat(song, absoluteBeatPosition) {
+      const beat = ((absoluteBeatPosition % song.totalBeats) + song.totalBeats) % song.totalBeats;
+      let active = song.events[0];
+
+      for (const event of song.events) {
+        if (event.startBeat <= beat) active = event;
+        else break;
+      }
+
+      return active;
+    }
+
+    function upcomingEvents(song, absoluteBeatPosition, windowBeats = 8) {
+      const beat = ((absoluteBeatPosition % song.totalBeats) + song.totalBeats) % song.totalBeats;
+      const results = [];
+
+      for (let cycle = 0; cycle < 2; cycle++) {
+        const offset = cycle * song.totalBeats;
+
+        for (const event of song.events) {
+          const start = event.startBeat + offset;
+          const distance = start - beat;
+
+          if (cycle === 0 && distance <= 0) continue;
+
+          if (distance > 0 && distance <= windowBeats) {
+            results.push({ ...event, beatsAway: distance });
+          }
+        }
+      }
+
+      return results.sort((a, b) => a.beatsAway - b.beatsAway);
+    }
+
+    function song2EventAtBeat(absoluteBeatPosition) {
+      const beat = ((absoluteBeatPosition % SONG2.totalBeats) + SONG2.totalBeats) % SONG2.totalBeats;
+      let active = SONG2.events[0];
+      for (const event of SONG2.events) {
+        if (event.startBeat <= beat) active = event;
+        else break;
+      }
+      return active;
+    }
+
+    function song2UpcomingEvents(absoluteBeatPosition, windowBeats = 8) {
+      const beat = ((absoluteBeatPosition % SONG2.totalBeats) + SONG2.totalBeats) % SONG2.totalBeats;
+      const results = [];
+
+      for (let cycle = 0; cycle < 2; cycle++) {
+        const offset = cycle * SONG2.totalBeats;
+        for (const event of SONG2.events) {
+          const start = event.startBeat + offset;
+          let distance = start - beat;
+          if (cycle === 0 && distance <= 0) continue;
+          if (distance > 0 && distance <= windowBeats) {
+            results.push({...event, beatsAway: distance});
+          }
+        }
+      }
+      return results.sort((a,b) => a.beatsAway - b.beatsAway);
+    }
+
+    function displaySong2SectionName(section) {
+      return section;
+    }
+
+    function chordAt(index) {
+      const n = SONG_MEASURES.length;
+      return SONG_MEASURES[((index % n) + n) % n];
+    }
+
+
+
+    function displaySectionName(index) {
+      const raw = chordAt(index).section;
+      let occurrence = 1;
+
+      // Count prior entrances into this section name.
+      for (let i = 1; i <= index; i++) {
+        if (chordAt(i).section === raw && chordAt(i - 1).section !== raw) {
+          occurrence++;
+        }
+      }
+
+      // Number repeated structural sections such as Verse 1 / Verse 2.
+      const totalEntrances = SONG_MEASURES.reduce((count, m, i) => {
+        if (m.section === raw && (i === 0 || SONG_MEASURES[i - 1].section !== raw)) {
+          return count + 1;
+        }
+        return count;
+      }, 0);
+
+      return totalEntrances > 1 ? `${raw} ${occurrence}` : raw;
+    }
+
+    function nextSectionEntranceInfo(currentIndex, absoluteBeatPosition) {
+      const currentSection = chordAt(currentIndex).section;
+
+      // Find the first chord/measure of the next section.
+      for (let step = 1; step <= SONG_MEASURES.length; step++) {
+        const idx = (currentIndex + step) % SONG_MEASURES.length;
+        const candidate = chordAt(idx);
+
+        if (candidate.section !== currentSection) {
+          // Use the exact same beat-distance basis as the chord runway.
+          const currentAbsoluteMeasure = Math.floor(
+            absoluteBeatPosition / beatsPerMeasure
+          );
+          const targetAbsoluteBeat =
+            (currentAbsoluteMeasure + step) * beatsPerMeasure;
+
+          return {
+            index: idx,
+            section: candidate.section,
+            beatsAway: targetAbsoluteBeat - absoluteBeatPosition
+          };
+        }
+      }
+
+      return null;
+    }
+
+    function runwayLeftForBeatsAway(beatsAway) {
+      if (beatsAway < 1 || beatsAway > 8) return null;
+      return ((beatsAway - 1) / 7) * 100;
+    }
+
+    function renderChordLane(index = 0, absoluteBeatPosition = 0) {
+      if (!chordLaneActive()) {
+        chordLane.classList.remove('visible');
+        sectionName.hidden = true;
+        return;
+      }
+
+      if (secondSongActive() || thirdSongActive()) {
+        const activeSong = secondSongActive() ? SONG2 : SONG3;
+        const current = eventAtBeat(activeSong, absoluteBeatPosition);
+        currentChordLabel.className = 'lane-chord current';
+        currentChordLabel.textContent = current.chord;
+        songSectionLabel.textContent = current.section;
+        songSectionLabel.dataset.section = current.section;
+        sectionName.hidden = true;
+        chordLane.classList.add('visible');
+        return;
+      }
+
+      chordLaneVisualIndex = index;
+      const current = chordAt(index);
+      currentChordLabel.className = 'lane-chord current';
+      currentChordLabel.textContent = current.chord;
+      songSectionLabel.textContent = displaySectionName(index);
+      songSectionLabel.dataset.section = current.section;
+      sectionName.hidden = true;
+      chordLane.classList.add('visible');
+    }
+
+    function absoluteChordStartBeat(songIndex) {
+      // Current experimental assembly uses one chord per measure.
+      // This helper makes the visual model beat-based so shorter chord
+      // durations can be introduced later without changing the runway concept.
+      return songIndex * beatsPerMeasure;
+    }
+
+    function renderUpcomingRunway(absoluteBeatPosition) {
+      upcomingChordRunway.innerHTML = '';
+
+      if (secondSongActive() || thirdSongActive()) {
+        const activeSong = secondSongActive() ? SONG2 : SONG3;
+        const upcoming = upcomingEvents(activeSong, absoluteBeatPosition, 8);
+
+        upcoming.forEach(event => {
+          const beatsAway = Math.ceil(event.beatsAway);
+          if (beatsAway < 1 || beatsAway > 8) return;
+
+          const label = document.createElement('div');
+          label.className = 'runway-chord';
+          label.textContent = event.chord;
+
+          const pct = ((beatsAway - 1) / 7) * 100;
+          label.style.left = `${pct}%`;
+          upcomingChordRunway.appendChild(label);
+        });
+        return;
+      }
+
+      const currentAbsoluteBeat = Math.floor(absoluteBeatPosition);
+      const currentMeasureIndex =
+        Math.floor(currentAbsoluteBeat / beatsPerMeasure) % SONG_MEASURES.length;
+
+      for (let offsetMeasures = 1; offsetMeasures <= 4; offsetMeasures++) {
+        const songIndex = (currentMeasureIndex + offsetMeasures) % SONG_MEASURES.length;
+        const chordStartBeat =
+          absoluteChordStartBeat(currentMeasureIndex + offsetMeasures);
+        const beatsAway = chordStartBeat - currentAbsoluteBeat;
+
+        if (beatsAway < 1 || beatsAway > 8) continue;
+
+        const measure = chordAt(songIndex);
+        const label = document.createElement('div');
+        label.className = 'runway-chord';
+        label.textContent = measure.chord;
+
+        const pct = ((beatsAway - 1) / 7) * 100;
+        label.style.left = `${pct}%`;
+        upcomingChordRunway.appendChild(label);
+      }
+    }
+
+    function stopChordLaneAnimation() {
+      if (chordLaneAnimationFrame) cancelAnimationFrame(chordLaneAnimationFrame);
+      chordLaneAnimationFrame = null;
+      chordLaneAnchorTime = null;
+      chordLaneLastBeat = -1;
+      chordTransitionBusy = false;
+    }
+
+    function sectionBoundaryInfo(visualIndex, absoluteBeatPosition) {
+      const currentSection = chordAt(visualIndex).section;
+      const currentMeasureStartBeat =
+        Math.floor(absoluteBeatPosition / beatsPerMeasure) * beatsPerMeasure;
+
+      for (let step = 1; step <= SONG_MEASURES.length; step++) {
+        const idx = (visualIndex + step) % SONG_MEASURES.length;
+        const candidate = chordAt(idx);
+
+        if (candidate.section !== currentSection) {
+          return {
+            nextIndex: idx,
+            nextSection: candidate.section,
+            beatsUntil:
+              currentMeasureStartBeat +
+              step * beatsPerMeasure -
+              absoluteBeatPosition
+          };
+        }
+      }
+
+      return null;
+    }
+
+    function incomingTitleXForBeatsAway(beatsAway) {
+      const discrete = Math.max(1, Math.min(8, Math.ceil(beatsAway)));
+      const pct = ((discrete - 1) / 7) * 100;
+      return 42 + (pct / 100) * 58;
+    }
+
+    function startChordLaneAnimation(firstBeatTime) {
+      stopChordLaneAnimation();
+
+      chordLaneAnchorTime = firstBeatTime;
+      chordLaneVisualIndex = 0;
+      chordLaneLastBeat = -1;
+
+      renderChordLane(0, 0);
+      renderUpcomingRunway(0);
+
+      incomingSectionLabel.textContent = '';
+      incomingSectionLabel.className = 'incoming-section-label';
+      incomingSectionLabel.style.left = '100%';
+
+      const animate = () => {
+        if (!running || !audioContext || !chordLaneActive() || chordLaneAnchorTime == null) {
+          chordLaneAnimationFrame = null;
+          return;
+        }
+
+        const elapsed = audioContext.currentTime - chordLaneAnchorTime;
+
+        if (elapsed < 0) {
+          chordLaneAnimationFrame = requestAnimationFrame(animate);
+          return;
+        }
+
+        const beatDur = secondsPerBeat();
+        const absoluteBeatPosition = elapsed / beatDur;
+        const absoluteBeat = Math.floor(absoluteBeatPosition);
+
+        if (secondSongActive() || thirdSongActive()) {
+          const activeSong = secondSongActive() ? SONG2 : SONG3;
+          const currentEvent = eventAtBeat(activeSong, absoluteBeatPosition);
+          currentChordLabel.textContent = currentEvent.chord;
+
+          if (absoluteBeat !== chordLaneLastBeat) {
+            chordLaneLastBeat = absoluteBeat;
+            renderUpcomingRunway(absoluteBeatPosition);
+          }
+
+          // Section-title behavior for Song 2
+          const currentSection = currentEvent.section;
+          if (songSectionLabel.dataset.section !== currentSection) {
+            songSectionLabel.textContent = currentSection;
+            songSectionLabel.dataset.section = currentSection;
+            songSectionLabel.style.opacity = '1';
+            incomingSectionLabel.textContent = '';
+            incomingSectionLabel.className = 'incoming-section-label';
+            incomingSectionLabel.style.left = '100%';
+          }
+
+          // Find first event of next section and its beat distance.
+          const beat = ((absoluteBeatPosition % activeSong.totalBeats) + activeSong.totalBeats) % activeSong.totalBeats;
+          let nextSectionEvent = null;
+          for (let cycle = 0; cycle < 2 && !nextSectionEvent; cycle++) {
+            const offset = cycle * activeSong.totalBeats;
+            for (const event of activeSong.events) {
+              const start = event.startBeat + offset;
+              if (start <= beat) continue;
+              if (event.section !== currentSection) {
+                nextSectionEvent = {...event, beatsAway: start - beat};
+                break;
+              }
+            }
+          }
+
+          if (nextSectionEvent) {
+            const d = nextSectionEvent.beatsAway;
+
+            if (d <= 4 && d > 0) {
+              const progress = (4 - d) / 4;
+              songSectionLabel.style.opacity = String(Math.max(0, 1 - progress));
+            } else {
+              songSectionLabel.style.opacity = '1';
+            }
+
+            incomingSectionLabel.textContent = '';
+            incomingSectionLabel.className = 'incoming-section-label';
+
+            if (d <= 8 && d > 0) {
+              const discrete = Math.max(1, Math.min(8, Math.ceil(d)));
+              const pct = ((discrete - 1) / 7) * 100;
+              const incomingX = 42 + (pct / 100) * 58;
+
+              incomingSectionLabel.textContent = nextSectionEvent.section;
+
+              if (incomingX <= 50) {
+                incomingSectionLabel.style.left = '50%';
+                incomingSectionLabel.className = 'incoming-section-label visible waiting';
+              } else {
+                incomingSectionLabel.style.left = `${incomingX}%`;
+                incomingSectionLabel.className = 'incoming-section-label visible';
+              }
+            }
+          }
+
+          chordLaneAnimationFrame = requestAnimationFrame(animate);
+          return;
+        }
+
+        // Song 1 behavior
+        const visualIndex =
+          Math.floor(absoluteBeat / beatsPerMeasure) % SONG_MEASURES.length;
+
+        if (visualIndex !== chordLaneVisualIndex) {
+          renderChordLane(visualIndex, absoluteBeatPosition);
+        }
+
+        if (absoluteBeat !== chordLaneLastBeat) {
+          chordLaneLastBeat = absoluteBeat;
+          renderUpcomingRunway(absoluteBeatPosition);
+        }
+
+        const visibleSection = chordAt(visualIndex).section;
+        const displayedSection = songSectionLabel.dataset.section;
+
+        if (displayedSection !== visibleSection) {
+          songSectionLabel.textContent = displaySectionName(visualIndex);
+          songSectionLabel.dataset.section = visibleSection;
+          songSectionLabel.style.opacity = '1';
+
+          incomingSectionLabel.textContent = '';
+          incomingSectionLabel.className = 'incoming-section-label';
+          incomingSectionLabel.style.left = '100%';
+        }
+
+        const boundary = sectionBoundaryInfo(
+          visualIndex,
+          absoluteBeatPosition
+        );
+
+        if (boundary) {
+          if (boundary.beatsUntil <= 4 && boundary.beatsUntil > 0) {
+            const fadeProgress = (4 - boundary.beatsUntil) / 4;
+            songSectionLabel.style.opacity =
+              String(Math.max(0, 1 - fadeProgress));
+          } else {
+            songSectionLabel.style.opacity = '1';
+          }
+
+          if (boundary.beatsUntil <= 8 && boundary.beatsUntil > 0) {
+            const incomingX = incomingTitleXForBeatsAway(
+              boundary.beatsUntil
+            );
+
+            incomingSectionLabel.textContent =
+              displaySectionName(boundary.nextIndex);
+
+            if (incomingX <= 50) {
+              incomingSectionLabel.style.left = '50%';
+              incomingSectionLabel.className =
+                'incoming-section-label visible waiting';
+            } else {
+              incomingSectionLabel.style.left = `${incomingX}%`;
+              incomingSectionLabel.className =
+                'incoming-section-label visible';
+            }
+          } else {
+            incomingSectionLabel.textContent = '';
+            incomingSectionLabel.className =
+              'incoming-section-label';
+            incomingSectionLabel.style.left = '100%';
+          }
+        }
+
+        chordLaneAnimationFrame = requestAnimationFrame(animate);
+      };
+
+      chordLaneAnimationFrame = requestAnimationFrame(animate);
+    }
+
+    /* ---------- UI ---------- */
+
+    function showPlay() {
+      metronomeToggle.classList.remove('running');
+      metronomeToggle.setAttribute('aria-label', 'Play metronome');
+    }
+
+    function showStop() {
+      metronomeToggle.classList.add('running');
+      metronomeToggle.setAttribute('aria-label', 'Stop metronome');
+    }
+
+    function setRhythmPickerVisible(visible) {
+      rhythmPickerVisible = visible;
+      rhythmPicker.hidden = !visible;
+      drumRhythmButton.setAttribute('aria-expanded', String(visible));
+    }
+
+    function currentRhythm() {
+      const id = selectedRhythmBySignature[currentTimeSignature];
+      return RHYTHMS[currentTimeSignature].find(rhythm => rhythm.id === id) || null;
+    }
+
+    function updateDrumButton() {
+      const rhythm = currentRhythm();
+      drumRhythmButton.classList.toggle('active', Boolean(rhythm));
+      drumRhythmButton.setAttribute(
+        'aria-label',
+        rhythm ? `Drum rhythm: ${rhythm.name}` : 'Choose drum rhythm'
+      );
+    }
+
+    function populateRhythmSelect() {
+      const selectedId = selectedRhythmBySignature[currentTimeSignature] || '';
+      rhythmSelect.innerHTML = '';
+
+      const off = document.createElement('option');
+      off.value = '';
+      off.textContent = 'Off';
+      rhythmSelect.appendChild(off);
+
+      RHYTHMS[currentTimeSignature].forEach(rhythm => {
+        const option = document.createElement('option');
+        option.value = rhythm.id;
+        option.textContent = rhythm.name;
+        rhythmSelect.appendChild(option);
+      });
+
+      rhythmSelect.value = selectedId;
+      updateDrumButton();
+      renderChordLane(0);
+    }
+
+    function clampTempo(value) {
+      return Math.max(MIN_BPM, Math.min(MAX_BPM, Math.round(Number(value) || DEFAULT_BPM)));
+    }
+
+    function reanchorLiveClock() {
+      if (!running || !audioContext) return;
+      nextBeatNumber = 1;
+      phraseMeasure = 1;
+      nextBeatTime = audioContext.currentTime + secondsPerBeat();
+      clockAnchorTime = nextBeatTime;
+    }
+
+    function setTempo(value) {
+      bpm = clampTempo(value);
+      tempoValue.value = bpm;
+      tempoSlider.value = bpm;
+      reanchorLiveClock();
+    }
+
+    function setTimeSignature(signature, beats) {
+      currentTimeSignature = signature;
+      beatsPerMeasure = Number(beats);
+
+      timeSignatureChoices.forEach(button => {
+        button.classList.toggle('selected', button.dataset.signature === currentTimeSignature);
+      });
+
+      beatLines.forEach((line, index) => {
+        if (index < beatsPerMeasure) {
+          line.style.display = 'block';
+          line.style.transform = `rotate(${180 + index * 360 / beatsPerMeasure}deg)`;
+        } else {
+          line.style.display = 'none';
+        }
+      });
+
+      populateRhythmSelect();
+      renderChordLane(0);
+      
+      reanchorLiveClock();
+    }
+
+    /* ---------- Web Audio ---------- */
+
+    async function ensureAudioContext() {
+      if (!audioContext) {
+        const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+        if (!AudioContextClass) throw new Error('Web Audio is not available.');
+        audioContext = new AudioContextClass();
+      }
+
+      if (audioContext.state === 'suspended') {
+        await audioContext.resume();
+      }
+    }
+
+    function getNoiseBuffer() {
+      if (noiseBuffer && noiseBuffer.sampleRate === audioContext.sampleRate) {
+        return noiseBuffer;
+      }
+
+      const length = Math.round(audioContext.sampleRate * 0.35);
+      noiseBuffer = audioContext.createBuffer(1, length, audioContext.sampleRate);
+      const data = noiseBuffer.getChannelData(0);
+
+      for (let i = 0; i < length; i++) {
+        data[i] = Math.random() * 2 - 1;
+      }
+
+      return noiseBuffer;
+    }
+
+    /* ---------- Metronome sound ---------- */
+
+    function playClick(time) {
+      const oscillator = audioContext.createOscillator();
+      const gain = audioContext.createGain();
+
+      oscillator.frequency.value = 850;
+
+      gain.gain.setValueAtTime(0.0001, time);
+      gain.gain.exponentialRampToValueAtTime(
+        Math.max(0.0001, 0.65 * metronomeVolumeLevel),
+        time + 0.002
+      );
+      gain.gain.exponentialRampToValueAtTime(0.0001, time + 0.055);
+
+      oscillator.connect(gain);
+      gain.connect(audioContext.destination);
+
+      oscillator.start(time);
+      oscillator.stop(time + 0.065);
+    }
+
+    /* ---------- Drum synthesis ---------- */
+
+    function playKick(time, level = 1) {
+      const oscillator = audioContext.createOscillator();
+      const gain = audioContext.createGain();
+      const peak = Math.max(0.0001, 0.50 * metronomeVolumeLevel * level);
+
+      oscillator.type = 'sine';
+      oscillator.frequency.setValueAtTime(135, time);
+      oscillator.frequency.exponentialRampToValueAtTime(48, time + 0.11);
+
+      gain.gain.setValueAtTime(peak, time);
+      gain.gain.exponentialRampToValueAtTime(0.0001, time + 0.18);
+
+      oscillator.connect(gain);
+      gain.connect(audioContext.destination);
+      oscillator.start(time);
+      oscillator.stop(time + 0.20);
+    }
+
+    function playSnare(time, level = 1) {
+      const noise = audioContext.createBufferSource();
+      const noiseFilter = audioContext.createBiquadFilter();
+      const noiseGain = audioContext.createGain();
+      const tone = audioContext.createOscillator();
+      const toneGain = audioContext.createGain();
+      const peak = Math.max(0.0001, 0.25 * metronomeVolumeLevel * level);
+
+      noise.buffer = getNoiseBuffer();
+      noiseFilter.type = 'highpass';
+      noiseFilter.frequency.value = 1100;
+      noiseGain.gain.setValueAtTime(peak, time);
+      noiseGain.gain.exponentialRampToValueAtTime(0.0001, time + 0.12);
+
+      tone.type = 'triangle';
+      tone.frequency.value = 185;
+      toneGain.gain.setValueAtTime(Math.max(0.0001, peak * 0.45), time);
+      toneGain.gain.exponentialRampToValueAtTime(0.0001, time + 0.07);
+
+      noise.connect(noiseFilter);
+      noiseFilter.connect(noiseGain);
+      noiseGain.connect(audioContext.destination);
+
+      tone.connect(toneGain);
+      toneGain.connect(audioContext.destination);
+
+      noise.start(time);
+      noise.stop(time + 0.14);
+      tone.start(time);
+      tone.stop(time + 0.09);
+    }
+
+    function playHat(time, level = 1, open = false) {
+      const noise = audioContext.createBufferSource();
+      const highpass = audioContext.createBiquadFilter();
+      const gain = audioContext.createGain();
+      const duration = open ? 0.16 : 0.045;
+      const peak = Math.max(0.0001, 0.095 * metronomeVolumeLevel * level);
+
+      noise.buffer = getNoiseBuffer();
+      highpass.type = 'highpass';
+      highpass.frequency.value = 6500;
+
+      gain.gain.setValueAtTime(peak, time);
+      gain.gain.exponentialRampToValueAtTime(0.0001, time + duration);
+
+      noise.connect(highpass);
+      highpass.connect(gain);
+      gain.connect(audioContext.destination);
+
+      noise.start(time);
+      noise.stop(time + duration + 0.02);
+    }
+
+    function playTom(time, pitch = 0.5, level = 1) {
+      const oscillator = audioContext.createOscillator();
+      const gain = audioContext.createGain();
+      const startFrequency = 185 - (pitch * 75);
+      const endFrequency = Math.max(60, startFrequency * 0.62);
+      const peak = Math.max(0.0001, 0.34 * metronomeVolumeLevel * level);
+
+      oscillator.type = 'sine';
+      oscillator.frequency.setValueAtTime(startFrequency, time);
+      oscillator.frequency.exponentialRampToValueAtTime(endFrequency, time + 0.12);
+
+      gain.gain.setValueAtTime(peak, time);
+      gain.gain.exponentialRampToValueAtTime(0.0001, time + 0.20);
+
+      oscillator.connect(gain);
+      gain.connect(audioContext.destination);
+      oscillator.start(time);
+      oscillator.stop(time + 0.22);
+    }
+
+
+    /* Experimental 64-measure song assembly for 4/4 Basic rock / pop only. */
+    const SONG_ASSEMBLY = [
+      ['Intro',['C','G','Am','F']],
+      ['Verse 1',['C','G','Am','F','C','G','Am','F']],
+      ['Pre-Chorus',['Dm','F','G','G']],
+      ['Chorus',['C','G','Am','F','C','G','Am','F']],
+      ['Verse 2',['C','G','Am','F','C','G','Am','F']],
+      ['Pre-Chorus',['Dm','F','G','G']],
+      ['Chorus',['C','G','Am','F','C','G','Am','F']],
+      ['Bridge',['Am','F','C','G','Am','F','C','G']],
+      ['Chorus',['C','G','Am','F','C','G','Am','F']],
+      ['Outro',['C','G','F','C']]
+    ];
+
+    const SONG2_ASSEMBLY = [
+      { section:'Intro', events:[
+        ['C',4],['Am',4],['F',4],['G',4]
+      ]},
+      { section:'Verse 1', events:[
+        ['C',4],['G/B',4],['Am',4],['Em',4],
+        ['F',4],['C/E',4],['Dm',4],['G',4]
+      ]},
+      { section:'Pre-Chorus 1', events:[
+        ['Am',4],['Em',4],['F',4],['G',4]
+      ]},
+      { section:'Chorus 1', events:[
+        ['F',4],['G',4],['C',4],['Am',4],
+        ['F',4],['G',4],['C',4],['C',4]
+      ]},
+      { section:'Verse 2', events:[
+        ['C',4],['G/B',4],['Am',4],['Em',4],
+        ['F',4],['C/E',4],['Dm',4],['G',4]
+      ]},
+      { section:'Pre-Chorus 2', events:[
+        ['Am',4],['Em',4],['F',4],['G',4]
+      ]},
+      { section:'Chorus 2', events:[
+        ['F',4],['G',4],['C',4],['Am',4],
+        ['F',4],['G',4],['C',4],['C',4]
+      ]},
+      { section:'Bridge', events:[
+        ['Am',4],['G',4],['F',4],['C/E',4],
+        ['Dm',4],['Am/C',4],['F',4],['G',4]
+      ]},
+      { section:'Final Chorus', events:[
+        ['F',2],['G',2],
+        ['C',2],['Am',2],
+        ['F',4],['G',4],['C',4],['Am',4],
+        ['F',2],['G',2],
+        ['C',4]
+      ]},
+      { section:'Outro', events:[
+        ['F',4],['G',4],['C',4],['C',4]
+      ]}
+    ];
+
+    function flattenSong2() {
+      const events = [];
+      let absoluteBeat = 0;
+
+      SONG2_ASSEMBLY.forEach(section => {
+        section.events.forEach(([chord, beats]) => {
+          events.push({
+            section: section.section,
+            chord,
+            beats,
+            startBeat: absoluteBeat
+          });
+          absoluteBeat += beats;
+        });
+      });
+
+      return { events, totalBeats: absoluteBeat };
+    }
+
+    const SONG2 = flattenSong2();
+
+
+    const SONG3_ASSEMBLY = [
+      { section:'Intro', events:[
+        ['C',4],['Am',4],['D7',4],['G',4]
+      ]},
+      { section:'Verse 1', events:[
+        ['C',4],['Em',4],['A7',4],['Dm',4],
+        ['F',4],['C/E',4],['D7',4],['G',4]
+      ]},
+      { section:'Pre-Chorus 1', events:[
+        ['Am',4],['E7',4],['F',4],['G',4]
+      ]},
+      { section:'Chorus 1', events:[
+        ['C',4],['G/B',4],['Am',4],['E7',4],
+        ['F',4],['C/E',4],['D7',4],['G',4]
+      ]},
+      { section:'Verse 2', events:[
+        ['C',4],['Em',4],['A7',4],['Dm',4],
+        ['F',4],['C/E',4],['D7',4],['G',4]
+      ]},
+      { section:'Pre-Chorus 2', events:[
+        ['Am',4],['E7',4],['F',4],['G',4]
+      ]},
+      { section:'Chorus 2', events:[
+        ['C',4],['G/B',4],['Am',4],['E7',4],
+        ['F',4],['C/E',4],['D7',4],['G',4]
+      ]},
+      { section:'Bridge', events:[
+        ['Am',4],['E7',4],['A7',4],['Dm',4],
+        ['Fm',4],['C/G',4],['D7',4],['G',4]
+      ]},
+      { section:'Final Chorus', events:[
+        ['C',4],['G/B',4],['Am',4],['E7',4],
+        ['F',4],['Fm',4],['C/G',4],['G',4]
+      ]},
+      { section:'Outro', events:[
+        ['C',4],['A7',4],['Dm',2],['G',2],['C',4]
+      ]}
+    ];
+
+    function flattenSong3() {
+      const events = [];
+      let absoluteBeat = 0;
+
+      SONG3_ASSEMBLY.forEach(section => {
+        section.events.forEach(([chord, beats]) => {
+          events.push({
+            section: section.section,
+            chord,
+            beats,
+            startBeat: absoluteBeat
+          });
+          absoluteBeat += beats;
+        });
+      });
+
+      return { events, totalBeats: absoluteBeat };
+    }
+
+    const SONG3 = flattenSong3();
+
+
+    const SONG_MEASURES = SONG_ASSEMBLY.flatMap(([section,chords]) =>
+      chords.map((chord,i)=>({section,chord,n:i+1,len:chords.length}))
+    );
+    const CHORDS = {
+      C:    [130.81, 261.63, 329.63, 392.00],
+      'C/E':[82.41, 261.63, 329.63, 392.00],
+      'C/G':[98.00, 261.63, 329.63, 392.00],
+      G:    [98.00, 196.00, 246.94, 293.66],
+      'G/B':[123.47, 196.00, 246.94, 293.66],
+      Am:   [110.00, 220.00, 261.63, 329.63],
+      'Am/C':[130.81, 220.00, 261.63, 329.63],
+      F:    [87.31, 174.61, 220.00, 261.63],
+      Fm:   [87.31, 174.61, 207.65, 261.63],
+      Dm:   [146.83, 293.66, 349.23, 440.00],
+      Em:   [82.41, 164.81, 196.00, 246.94],
+      E7:   [82.41, 164.81, 207.65, 246.94, 293.66],
+      A7:   [110.00, 220.00, 277.18, 329.63, 392.00],
+      D7:   [146.83, 293.66, 369.99, 440.00, 523.25]
+    };
+    let songMeasureIndex = 0;
+    let song2ScheduledBeat = 0;
+    let song3ScheduledBeat = 0;
+
+    function songExperimentActive() {
+      const rhythm = currentRhythm();
+      return currentTimeSignature === '4/4' &&
+        (rhythm?.id === 'rock' || rhythm?.id === 'four-floor' || rhythm?.id === 'funk');
+    }
+
+    function thirdSongActive() {
+      return currentTimeSignature === '4/4' && currentRhythm()?.id === 'funk';
+    }
+
+    function firstSongActive() {
+      return currentTimeSignature === '4/4' && currentRhythm()?.id === 'rock';
+    }
+
+    function secondSongActive() {
+      return currentTimeSignature === '4/4' && currentRhythm()?.id === 'four-floor';
+    }
+
+    function songMeasure() {
+      return SONG_MEASURES[songMeasureIndex % SONG_MEASURES.length];
+    }
+
+    function playChord(name, time) {
+      const notes = CHORDS[name];
+      if (!notes || !audioContext) return;
+
+      const duration = Math.max(0.25, secondsPerMeasure() * 0.88);
+
+      const chordBus = audioContext.createGain();
+      const peak = Math.max(0.0001, 0.22 * metronomeVolumeLevel);
+
+      chordBus.gain.setValueAtTime(0.0001, time);
+      chordBus.gain.exponentialRampToValueAtTime(peak, time + 0.025);
+      chordBus.gain.setValueAtTime(peak, time + Math.max(0.05, duration - 0.14));
+      chordBus.gain.exponentialRampToValueAtTime(0.0001, time + duration);
+      chordBus.connect(audioContext.destination);
+
+      notes.forEach((freq, index) => {
+        const oscillator = audioContext.createOscillator();
+        const voiceGain = audioContext.createGain();
+
+        oscillator.type = index === 0 ? 'triangle' : 'sine';
+        oscillator.frequency.setValueAtTime(freq, time);
+
+        voiceGain.gain.setValueAtTime(index === 0 ? 0.50 : 0.34, time);
+
+        oscillator.connect(voiceGain);
+        voiceGain.connect(chordBus);
+
+        oscillator.start(time);
+        oscillator.stop(time + duration + 0.03);
+      });
+    }
+
+    function scheduleSongChord(time, beat) {
+      if (!songExperimentActive()) return;
+
+      if (firstSongActive()) {
+        if (beat !== 1) return;
+        const measure = SONG_MEASURES[songMeasureIndex % SONG_MEASURES.length];
+        if (measure) playChord(measure.chord, time);
+        return;
+      }
+
+      if (secondSongActive()) {
+        const currentAbsoluteBeat = song2ScheduledBeat % SONG2.totalBeats;
+        const event = SONG2.events.find(e => e.startBeat === currentAbsoluteBeat);
+        if (event) playChord(event.chord, time);
+        return;
+      }
+
+      if (thirdSongActive()) {
+        const currentAbsoluteBeat = song3ScheduledBeat % SONG3.totalBeats;
+        const event = SONG3.events.find(e => e.startBeat === currentAbsoluteBeat);
+        if (event) playChord(event.chord, time);
+      }
+    }
+
+    function scheduleAssemblyTurnaround(time,beat,rhythm) {
+      if(!songExperimentActive()) {
+        scheduleTurnaroundBeat(time,beat,rhythm);
+        return;
+      }
+      const m=songMeasure();
+      if(m.n!==m.len || beat!==beatsPerMeasure) return;
+
+      if(m.section==='Outro') {
+        scheduleAtBeatFraction(time,.55,playTom,.72,.62);
+      } else if(m.section==='Intro') {
+        scheduleAtBeatFraction(time,.50,playSnare,.72);
+        scheduleAtBeatFraction(time,.78,playTom,.58,.82);
+      } else if(m.section==='Pre-Chorus') {
+        [0,.25,.5,.75].forEach((f,i)=>scheduleAtBeatFraction(time,f,playSnare,.58+i*.12));
+      } else if(m.section.startsWith('Verse')) {
+        scheduleAtBeatFraction(time,0,playSnare,.70);
+        scheduleAtBeatFraction(time,.50,playTom,.42,.82);
+        scheduleAtBeatFraction(time,.78,playTom,.78,.90);
+      } else if(m.section==='Bridge') {
+        [0,.33,.66].forEach((f,i)=>scheduleAtBeatFraction(time,f,playTom,i*.45,.88+i*.05));
+      } else if(m.section==='Chorus') {
+        scheduleAtBeatFraction(time,0,playSnare,.82);
+        [.25,.5,.75].forEach((f,i)=>scheduleAtBeatFraction(time,f,playTom,.18+i*.35,.9+i*.05));
+      }
+    }
+
+    /* ---------- Drum turnarounds ----------
+       These are intentionally internal: the user hears a style-appropriate
+       variation in measure 8, then the phrase returns to measure 1.
+    */
+
+    const TURNAROUND_TYPES = {
+      '4/4': {
+        rock:'tom8',
+        'four-floor':'snareBuild',
+        funk:'syncKickSnare',
+        shuffle:'tripletSnareTom',
+        'half-time':'tom16',
+        'double-time':'fastSnare',
+        disco:'openHatPickup',
+        'one-drop':'rimTomPickup',
+        rockers:'tomKickPickup',
+        bossa:'crossStickPickup'
+      },
+      '3/4': {
+        waltz:'beat3Snare',
+        'rock-waltz':'beat3Tom',
+        'pop-34':'eighthSnareTom',
+        'country-waltz':'beat3Snare',
+        'jazz-waltz':'tripletRideSnare',
+        'brush-waltz':'brushSweep',
+        'half-34':'broadTom',
+        'folk-waltz':'beat3Snare',
+        'heavy-34':'descendingTom',
+        'sync-34':'syncKickSnare'
+      },
+      '6/8': {
+        'basic-68':'compoundTom',
+        'rock-ballad-68':'compoundSnareTom',
+        'blues-68':'tripletSnareTom',
+        'shuffle-68':'tripletTom',
+        'soul-68':'compoundSync',
+        'gospel-68':'rollingFill',
+        'half-68':'broadTom',
+        'afro-cuban-68':'crossRhythm',
+        'african-68':'crossTom',
+        'march-68':'snareRoll'
+      },
+      '12/8': {
+        'blues-128':'tripletSnareTom',
+        'rock-ballad-128':'descendingTom',
+        'slow-blues-128':'shortTriplet',
+        'shuffle-128':'tripletSnareTom',
+        'soul-128':'syncKickSnare',
+        'gospel-128':'rollingFill',
+        'rnb-128':'restrainedPickup',
+        'half-128':'broadTom',
+        'triplet-rock-128':'fullTripletTom',
+        'afro-128':'crossRhythm'
+      },
+      '2/4': {
+        'basic-24':'beat2Snare',
+        'march-24':'snareRoll',
+        polka:'doubleStroke',
+        'country-two':'trainPickup',
+        train:'accentedRoll',
+        'fast-rock-24':'fastSnareTom',
+        samba:'syncTom',
+        baiao:'kickTomSync',
+        frevo:'rapidSnare',
+        'funk-24':'syncKickSnare'
+      }
+    };
+
+    function scheduleAtBeatFraction(beatTime, fraction, player, ...args) {
+      player(beatTime + secondsPerBeat() * fraction, ...args);
+    }
+
+    function scheduleTurnaroundBeat(beatTime, beatNumber, rhythm) {
+      if (phraseMeasure !== 8 || !rhythm) return;
+
+      const type = TURNAROUND_TYPES[currentTimeSignature]?.[rhythm.id];
+      if (!type) return;
+
+      const last = beatsPerMeasure;
+      const penultimate = Math.max(1, beatsPerMeasure - 1);
+
+      const onLast = () => beatNumber === last;
+      const onPenultimate = () => beatNumber === penultimate;
+
+      switch (type) {
+        case 'tom8':
+          if (onLast()) {
+            scheduleAtBeatFraction(beatTime, 0.00, playTom, 0.15, 1.0);
+            scheduleAtBeatFraction(beatTime, 0.50, playTom, 0.75, 1.0);
+          }
+          break;
+
+        case 'snareBuild':
+          if (onLast()) {
+            [0, 0.25, 0.5, 0.75].forEach((f, i) =>
+              scheduleAtBeatFraction(beatTime, f, playSnare, 0.65 + i * 0.12)
+            );
+            scheduleAtBeatFraction(beatTime, 0.88, playHat, 1.0, true);
+          }
+          break;
+
+        case 'syncKickSnare':
+          if (onLast()) {
+            scheduleAtBeatFraction(beatTime, 0.00, playKick, 0.95);
+            scheduleAtBeatFraction(beatTime, 0.38, playSnare, 0.85);
+            scheduleAtBeatFraction(beatTime, 0.68, playKick, 0.85);
+            scheduleAtBeatFraction(beatTime, 0.82, playSnare, 1.05);
+          }
+          break;
+
+        case 'tripletSnareTom':
+          if (onLast()) {
+            scheduleAtBeatFraction(beatTime, 0.00, playSnare, 0.85);
+            scheduleAtBeatFraction(beatTime, 1/3, playTom, 0.25, 0.95);
+            scheduleAtBeatFraction(beatTime, 2/3, playTom, 0.78, 1.0);
+          }
+          break;
+
+        case 'tom16':
+        case 'descendingTom':
+          if (onLast()) {
+            [0.00, 0.25, 0.50, 0.75].forEach((f, i) =>
+              scheduleAtBeatFraction(beatTime, f, playTom, i / 3, 0.95)
+            );
+          }
+          break;
+
+        case 'fastSnare':
+        case 'rapidSnare':
+          if (onLast()) {
+            [0.00, 0.25, 0.50, 0.75].forEach((f, i) =>
+              scheduleAtBeatFraction(beatTime, f, playSnare, 0.72 + i * 0.09)
+            );
+          }
+          break;
+
+        case 'openHatPickup':
+          if (onLast()) {
+            scheduleAtBeatFraction(beatTime, 0.50, playHat, 1.0, true);
+            scheduleAtBeatFraction(beatTime, 0.75, playSnare, 1.0);
+          }
+          break;
+
+        case 'rimTomPickup':
+          if (onLast()) {
+            scheduleAtBeatFraction(beatTime, 0.50, playSnare, 0.55);
+            scheduleAtBeatFraction(beatTime, 0.78, playTom, 0.55, 0.85);
+          }
+          break;
+
+        case 'tomKickPickup':
+          if (onLast()) {
+            scheduleAtBeatFraction(beatTime, 0.25, playTom, 0.30, 0.9);
+            scheduleAtBeatFraction(beatTime, 0.55, playTom, 0.75, 0.9);
+            scheduleAtBeatFraction(beatTime, 0.82, playKick, 1.0);
+          }
+          break;
+
+        case 'crossStickPickup':
+          if (onLast()) {
+            scheduleAtBeatFraction(beatTime, 0.25, playSnare, 0.48);
+            scheduleAtBeatFraction(beatTime, 0.72, playSnare, 0.58);
+          }
+          break;
+
+        case 'beat3Snare':
+        case 'beat2Snare':
+          if (onLast()) {
+            scheduleAtBeatFraction(beatTime, 0.50, playSnare, 0.9);
+          }
+          break;
+
+        case 'beat3Tom':
+          if (onLast()) {
+            scheduleAtBeatFraction(beatTime, 0.00, playTom, 0.20, 0.9);
+            scheduleAtBeatFraction(beatTime, 0.50, playTom, 0.72, 1.0);
+          }
+          break;
+
+        case 'eighthSnareTom':
+        case 'fastSnareTom':
+          if (onLast()) {
+            scheduleAtBeatFraction(beatTime, 0.00, playSnare, 0.85);
+            scheduleAtBeatFraction(beatTime, 0.50, playTom, 0.68, 1.0);
+          }
+          break;
+
+        case 'tripletRideSnare':
+          if (onLast()) {
+            scheduleAtBeatFraction(beatTime, 0.00, playHat, 0.8, true);
+            scheduleAtBeatFraction(beatTime, 1/3, playSnare, 0.65);
+            scheduleAtBeatFraction(beatTime, 2/3, playSnare, 0.9);
+          }
+          break;
+
+        case 'brushSweep':
+          if (onLast()) {
+            [0.00, 0.33, 0.66].forEach((f, i) =>
+              scheduleAtBeatFraction(beatTime, f, playSnare, 0.42 + i * 0.08)
+            );
+          }
+          break;
+
+        case 'broadTom':
+          if (onPenultimate()) {
+            scheduleAtBeatFraction(beatTime, 0.50, playTom, 0.15, 0.9);
+          }
+          if (onLast()) {
+            scheduleAtBeatFraction(beatTime, 0.00, playTom, 0.50, 0.95);
+            scheduleAtBeatFraction(beatTime, 0.66, playTom, 0.85, 1.0);
+          }
+          break;
+
+        case 'compoundTom':
+          if (onLast()) {
+            [0.00, 0.33, 0.66].forEach((f, i) =>
+              scheduleAtBeatFraction(beatTime, f, playTom, i / 2, 0.95)
+            );
+          }
+          break;
+
+        case 'compoundSnareTom':
+          if (onLast()) {
+            scheduleAtBeatFraction(beatTime, 0.00, playSnare, 0.85);
+            scheduleAtBeatFraction(beatTime, 0.33, playTom, 0.35, 0.9);
+            scheduleAtBeatFraction(beatTime, 0.66, playTom, 0.78, 1.0);
+          }
+          break;
+
+        case 'tripletTom':
+        case 'fullTripletTom':
+          if (onLast()) {
+            [0.00, 0.33, 0.66].forEach((f, i) =>
+              scheduleAtBeatFraction(beatTime, f, playTom, i / 2, 1.0)
+            );
+          }
+          break;
+
+        case 'compoundSync':
+          if (onLast()) {
+            scheduleAtBeatFraction(beatTime, 0.00, playSnare, 0.75);
+            scheduleAtBeatFraction(beatTime, 0.34, playKick, 0.9);
+            scheduleAtBeatFraction(beatTime, 0.68, playTom, 0.65, 0.95);
+          }
+          break;
+
+        case 'rollingFill':
+          if (onPenultimate() || onLast()) {
+            [0.00, 0.33, 0.66].forEach((f, i) => {
+              const player = (beatNumber === last && i > 0) ? playTom : playSnare;
+              if (player === playTom) {
+                scheduleAtBeatFraction(beatTime, f, playTom, i * 0.45, 0.9);
+              } else {
+                scheduleAtBeatFraction(beatTime, f, playSnare, 0.65 + i * 0.08);
+              }
+            });
+          }
+          break;
+
+        case 'crossRhythm':
+          if (onPenultimate()) {
+            scheduleAtBeatFraction(beatTime, 0.00, playTom, 0.15, 0.85);
+            scheduleAtBeatFraction(beatTime, 0.66, playSnare, 0.7);
+          }
+          if (onLast()) {
+            scheduleAtBeatFraction(beatTime, 0.33, playTom, 0.58, 0.95);
+            scheduleAtBeatFraction(beatTime, 0.82, playKick, 1.0);
+          }
+          break;
+
+        case 'crossTom':
+          if (onPenultimate() || onLast()) {
+            scheduleAtBeatFraction(beatTime, 0.00, playTom, beatNumber === last ? 0.55 : 0.15, 0.85);
+            scheduleAtBeatFraction(beatTime, 0.66, playTom, beatNumber === last ? 0.90 : 0.42, 0.95);
+          }
+          break;
+
+        case 'snareRoll':
+        case 'accentedRoll':
+          if (onLast()) {
+            [0.00, 0.20, 0.40, 0.60, 0.80].forEach((f, i) =>
+              scheduleAtBeatFraction(beatTime, f, playSnare, 0.58 + i * 0.08)
+            );
+          }
+          break;
+
+        case 'shortTriplet':
+          if (onLast()) {
+            scheduleAtBeatFraction(beatTime, 0.33, playSnare, 0.7);
+            scheduleAtBeatFraction(beatTime, 0.66, playTom, 0.65, 0.9);
+          }
+          break;
+
+        case 'restrainedPickup':
+          if (onLast()) {
+            scheduleAtBeatFraction(beatTime, 0.50, playSnare, 0.55);
+            scheduleAtBeatFraction(beatTime, 0.82, playTom, 0.58, 0.65);
+          }
+          break;
+
+        case 'doubleStroke':
+          if (onLast()) {
+            scheduleAtBeatFraction(beatTime, 0.58, playSnare, 0.72);
+            scheduleAtBeatFraction(beatTime, 0.78, playSnare, 0.90);
+          }
+          break;
+
+        case 'trainPickup':
+          if (onLast()) {
+            [0.25, 0.50, 0.75].forEach((f, i) =>
+              scheduleAtBeatFraction(beatTime, f, playSnare, 0.58 + i * 0.12)
+            );
+          }
+          break;
+
+        case 'syncTom':
+          if (onLast()) {
+            scheduleAtBeatFraction(beatTime, 0.18, playTom, 0.15, 0.85);
+            scheduleAtBeatFraction(beatTime, 0.55, playSnare, 0.72);
+            scheduleAtBeatFraction(beatTime, 0.82, playTom, 0.75, 0.95);
+          }
+          break;
+
+        case 'kickTomSync':
+          if (onLast()) {
+            scheduleAtBeatFraction(beatTime, 0.00, playKick, 0.95);
+            scheduleAtBeatFraction(beatTime, 0.38, playTom, 0.28, 0.9);
+            scheduleAtBeatFraction(beatTime, 0.72, playTom, 0.78, 1.0);
+          }
+          break;
+      }
+    }
+
+    function scheduleInstrumentSteps(steps, subdivisions, beatIndex, beatTime, player, level = 1) {
+      if (!steps) return;
+
+      const subDuration = secondsPerBeat() / subdivisions;
+
+      steps.forEach(step => {
+        const eventBeatIndex = Math.floor(step / subdivisions);
+        if (eventBeatIndex !== beatIndex) return;
+
+        const localStep = step % subdivisions;
+        player(beatTime + localStep * subDuration, level);
+      });
+    }
+
+    function scheduleRhythmBeat(beatTime, beatNumber) {
+      const rhythm = currentRhythm();
+      if (!rhythm) return;
+
+      const beatIndex = beatNumber - 1;
+      const subdivisions = rhythm.subdivisions;
+
+      scheduleInstrumentSteps(rhythm.kick, subdivisions, beatIndex, beatTime, playKick, 1);
+      scheduleInstrumentSteps(rhythm.snare, subdivisions, beatIndex, beatTime, playSnare, 1);
+      scheduleInstrumentSteps(rhythm.hat, subdivisions, beatIndex, beatTime, playHat, 0.85);
+
+      if (rhythm.openHat) {
+        scheduleInstrumentSteps(
+          rhythm.openHat,
+          subdivisions,
+          beatIndex,
+          beatTime,
+          (time, level) => playHat(time, level, true),
+          0.9
+        );
+      }
+
+      scheduleAssemblyTurnaround(beatTime, beatNumber, rhythm);
+    }
+
+    /* ---------- Visual beat ---------- */
+
+    function flashBeat(beatNumber, delayMs = 0) {
+      setTimeout(() => {
+        if (!running) return;
+
+        const line = beatLines[(beatNumber - 1) % beatsPerMeasure];
+        if (!line) return;
+
+        if (beatNumber === 1) {
+          measureClock.classList.add('downbeat-circle-flash');
+        }
+
+        line.classList.add('flash');
+
+        setTimeout(() => {
+          line.classList.remove('flash');
+          if (beatNumber === 1) {
+            measureClock.classList.remove('downbeat-circle-flash');
+          }
+        }, beatNumber === 1 ? 230 : 170);
+      }, Math.max(0, delayMs));
+    }
+
+    function scheduleVisualAtBeat(scheduledTime, beatNumber) {
+      const delayMs = Math.max(0, (scheduledTime - audioContext.currentTime) * 1000);
+      flashBeat(beatNumber, delayMs);
+    }
+
+    /* ---------- Scheduler ---------- */
+
+    function scheduleMetronome() {
+      if (!running || !audioContext) return;
+
+      const now = audioContext.currentTime;
+
+      while (nextBeatTime < now + SCHEDULE_AHEAD_SECONDS) {
+        const scheduledBeat = nextBeatNumber;
+
+        playClick(nextBeatTime);
+        scheduleSongChord(nextBeatTime, scheduledBeat);
+        scheduleRhythmBeat(nextBeatTime, scheduledBeat);
+
+        if (secondSongActive()) {
+          song2ScheduledBeat = (song2ScheduledBeat + 1) % SONG2.totalBeats;
+        }
+
+        if (thirdSongActive()) {
+          song3ScheduledBeat = (song3ScheduledBeat + 1) % SONG3.totalBeats;
+        }
+        scheduleVisualAtBeat(nextBeatTime, scheduledBeat);
+
+        nextBeatTime += secondsPerBeat();
+
+        if (nextBeatNumber === beatsPerMeasure) {
+          phraseMeasure = phraseMeasure === 8 ? 1 : phraseMeasure + 1;
+          if (songExperimentActive()) {
+            songMeasureIndex = (songMeasureIndex + 1) % SONG_MEASURES.length;
+          }
+        }
+
+        nextBeatNumber = (nextBeatNumber % beatsPerMeasure) + 1;
+      }
+
+      schedulerTimer = setTimeout(scheduleMetronome, SCHEDULER_INTERVAL_MS);
+    }
+
+    async function startMetronome() {
+      await ensureAudioContext();
+      if (running) return;
+
+      running = true;
+      nextBeatNumber = 1;
+      phraseMeasure = 1;
+      songMeasureIndex = 0;
+      song2ScheduledBeat = 0;
+      song3ScheduledBeat = 0;
+      nextBeatTime = audioContext.currentTime + START_LATENCY_SECONDS;
+
+      showStop();
+
+      showClockHand();
+      startClock(nextBeatTime);
+
+      // Core metronome first; song visuals are optional.
+      scheduleMetronome();
+
+      try {
+        startChordLaneAnimation(nextBeatTime);
+      } catch (error) {
+        console.error('Chord display could not start:', error);
+      }
+    }
+
+    function stopMetronome() {
+      running = false;
+
+      if (schedulerTimer) {
+        clearTimeout(schedulerTimer);
+        schedulerTimer = null;
+      }
+
+      beatLines.forEach(line => line.classList.remove('flash'));
+      measureClock.classList.remove('downbeat-circle-flash');
+
+      stopClock();
+      stopChordLaneAnimation();
+
+      showPlay();
+    }
+
+    /* ---------- Measure clock ---------- */
+
+    function showClockHand() {
+      clockHand.classList.add('visible');
+    }
+
+    function hideClockHand() {
+      clockHand.classList.remove('visible');
+    }
+
+    function startClock(anchorAudioTime) {
+      clockAnchorTime = anchorAudioTime;
+
+      if (clockAnimationFrame) {
+        cancelAnimationFrame(clockAnimationFrame);
+      }
+
+      const animate = () => {
+        if (!audioContext || clockAnchorTime == null || !running) {
+          clockAnimationFrame = null;
+          return;
+        }
+
+        const elapsed = audioContext.currentTime - clockAnchorTime;
+        const measureDuration = secondsPerMeasure();
+        const phase = ((elapsed % measureDuration) + measureDuration) % measureDuration;
+        const degrees = (phase / measureDuration) * 360;
+
+        clockHand.style.transform =
+          `translate(-50%, -100%) rotate(${degrees}deg)`;
+
+        clockAnimationFrame = requestAnimationFrame(animate);
+      };
+
+      clockAnimationFrame = requestAnimationFrame(animate);
+    }
+
+    function stopClock() {
+      if (clockAnimationFrame) {
+        cancelAnimationFrame(clockAnimationFrame);
+      }
+
+      clockAnimationFrame = null;
+      clockAnchorTime = null;
+      clockHand.style.transform = 'translate(-50%, -100%) rotate(0deg)';
+      hideClockHand();
+    }
+
+    /* ---------- Event wiring ---------- */
+
+    tempoSlider.addEventListener('input', () => {
+      setTempo(tempoSlider.value);
+    });
+
+    tempoValue.addEventListener('change', () => {
+      setTempo(tempoValue.value);
+    });
+
+    timeSignatureChoices.forEach(button => {
+      button.addEventListener('click', event => {
+        event.preventDefault();
+        event.stopPropagation();
+        setTimeSignature(button.dataset.signature, button.dataset.beats);
+      });
+    });
+
+    metronomeVolume.addEventListener('input', () => {
+      const value = Math.max(0, Math.min(100, Number(metronomeVolume.value)));
+      metronomeVolumeLevel = value / 100;
+      metronomeVolumeValue.textContent = `${Math.round(value)}%`;
+    });
+
+    drumRhythmButton.addEventListener('click', () => {
+      setRhythmPickerVisible(!rhythmPickerVisible);
+      if (!rhythmPicker.hidden) {
+        rhythmSelect.focus({ preventScroll: true });
+      }
+    });
+
+    rhythmSelect.addEventListener('change', () => {
+      selectedRhythmBySignature[currentTimeSignature] = rhythmSelect.value;
+      phraseMeasure = 1;
+      songMeasureIndex = 0;
+      song2ScheduledBeat = 0;
+      song3ScheduledBeat = 0;
+      updateDrumButton();
+      renderChordLane(0);
+    });
+
+    metronomeToggle.addEventListener('click', async () => {
+      if (running) {
+        stopMetronome();
+        return;
+      }
+
+      try {
+        await startMetronome();
+      } catch (error) {
+        console.error('Metronome could not start:', error);
+        stopMetronome();
+      }
+    });
+
+    /* ---------- Initial state ---------- */
+
+    showPlay();
+    hideClockHand();
+    setTempo(DEFAULT_BPM);
+    setTimeSignature('4/4', 4);
+    metronomeVolume.value = 100;
+    metronomeVolumeLevel = 1.0;
+    metronomeVolumeValue.textContent = '100%';
+    setRhythmPickerVisible(false);
+    renderChordLane(0);
+    
+  })();
+  </script>
+</body>
+</html>
